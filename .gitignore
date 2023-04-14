@@ -129,3 +129,6 @@ dmypy.json
 .pyre/
 
 openai_api.json
+# tensorboard logs
+transformers/runs/
+transformers/data/enwik8.gz:Zone.Identifier
