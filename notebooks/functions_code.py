@@ -29,9 +29,9 @@ class Order(CustomBaseModel):
     """Order details."""
 
     id: int = Field(description="Order ID.")
-    name: str = Field(description="Ordered item's name.")
+    item_name: str = Field(description="Ordered item's name.")
     status: OrderStatus = Field(description="Order status.")
-    date: datetime = Field(description="Order date.")
+    order_date: datetime = Field(description="Order date.")
     current_location: str = Field(
         description="OUT_FOR_DELIVERY order's current location.", default=""
     )
@@ -50,15 +50,10 @@ class Order(CustomBaseModel):
                     prop["enum"] = [status.value for status in OrderStatus]
             CustomBaseModel.Config.json_schema_extra(schema)
 
-    def csv(self):
-        return f"{self.id},{self.name},{self.status},{self.date},{self.current_location},{self.delivery_eta}"
-
-    @classmethod
-    def csv_header(cls):
-        return ",".join(list(cls.model_fields.keys()))
-
     def stringify(self):
-        return self.csv_header() + "\n" + self.csv()
+        csv_header = ",".join(list(self.model_fields.keys()))
+        csv = f"{self.id},{self.item_name},{self.status},{self.order_date},{self.current_location},{self.delivery_eta}"
+        return csv_header + "\n" + csv
 
 
 class OrderList(CustomBaseModel):
@@ -67,9 +62,11 @@ class OrderList(CustomBaseModel):
     orders: List[Order] = Field(description="List of orders.")
 
     def stringify(self):
-        orders_csv = [Order.csv_header()]
+        csv_header = ",".join(list(Order.model_fields.keys())[:-2])
+        orders_csv = [csv_header]
         for order in self.orders:
-            orders_csv.append(order.csv())
+            csv = f"{order.id},{order.item_name},{order.status},{order.order_date}"
+            orders_csv.append(csv)
         return "\n".join(orders_csv)
 
 
@@ -78,37 +75,37 @@ class OrderAPI:
         self.orders = [
             Order(
                 id=124,
-                name="Nike running shoes",
+                item_name="Nike running shoes",
                 status=OrderStatus.OUT_FOR_DELIVERY,
-                date=datetime.strptime("9/11/2023", "%m/%d/%Y"),
+                order_date=datetime.strptime("9/11/2023", "%m/%d/%Y"),
                 current_location="Indiranagar",
                 delivery_eta=datetime.strptime("9/13/2023", "%m/%d/%Y"),
             ),
             Order(
                 id=123,
-                name="Beige blanket",
+                item_name="Beige blanket",
                 status=OrderStatus.DELIVERED,
-                date=datetime.strptime("1/1/2023", "%m/%d/%Y"),
+                order_date=datetime.strptime("1/1/2023", "%m/%d/%Y"),
             ),
             Order(
                 id=122,
-                name="IKEA Table lamp",
+                item_name="IKEA Table lamp",
                 status=OrderStatus.CANCELED,
-                date=datetime.strptime("2/28/2022", "%m/%d/%Y"),
+                order_date=datetime.strptime("2/28/2022", "%m/%d/%Y"),
             ),
             Order(
                 id=121,
-                name="Bullet proof socks",
+                item_name="Shampoo",
                 status=OrderStatus.DELIVERED,
-                date=datetime.strptime("1/1/2022", "%m/%d/%Y"),
+                order_date=datetime.strptime("1/1/2022", "%m/%d/%Y"),
             ),
         ]
 
     def list_orders(self) -> OrderList:
         """List orders."""
-        return OrderList(self.orders)
+        return OrderList(orders=self.orders)
 
-    def get_order_details(self, order_id: str) -> Order:
+    def get_order_details(self, order_id: int) -> Order:
         """Get order details like name, status, order datetime of an order id. If status is OUT_FOR_DELIVERY, order's current location and ETA is also returned."""
         order = [o for o in self.orders if o.id == order_id][0]
         return order
@@ -128,7 +125,8 @@ class OrderAPI:
                         return_type = return_type.model_json_schema()
                 else:
                     type_to_name = {
-                        str: "string"
+                        str: "string",
+                        int: "integer",
                     }
                     parameters[arg_name] = {
                         "type": type_to_name[arg_type],
