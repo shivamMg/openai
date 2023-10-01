@@ -50,7 +50,7 @@ class Order(CustomBaseModel):
                     prop["enum"] = [status.value for status in OrderStatus]
             CustomBaseModel.Config.json_schema_extra(schema)
 
-    def stringify(self):
+    def __str__(self):
         csv_header = ",".join(list(self.model_fields.keys()))
         csv = f"{self.id},{self.item_name},{self.status},{self.order_date},{self.current_location},{self.delivery_eta}"
         return csv_header + "\n" + csv
@@ -61,7 +61,7 @@ class OrderList(CustomBaseModel):
 
     orders: List[Order] = Field(description="List of orders.")
 
-    def stringify(self):
+    def __str__(self):
         csv_header = ",".join(list(Order.model_fields.keys())[:-2])
         orders_csv = [csv_header]
         for order in self.orders:
@@ -101,8 +101,8 @@ class OrderAPI:
             ),
         ]
 
-    def list_orders(self) -> OrderList:
-        """List orders."""
+    def list_orders(self, to_get_order_details: bool) -> OrderList:
+        """List orders. If the intent of list orders is to get order ids then to_get_order_details should be true."""
         return OrderList(orders=self.orders)
 
     def get_order_details(self, order_id: int) -> Order:
@@ -110,9 +110,24 @@ class OrderAPI:
         order = [o for o in self.orders if o.id == order_id][0]
         return order
 
+    def cancel_order(self, order_id: int, confirmed: bool) -> str:
+        """Cancel OUT_FOR_DELIVER order. confirmed represents whether user has confirmed cancellation. Return value tells whether cancellation was successful."""
+        return "Cancellation was successful."
+
+    @staticmethod
+    def _type_to_parameter(type_cls):
+        type_to_name = {
+            str: "string",
+            int: "integer",
+            bool: "boolean",
+        }
+        return {
+            "type": type_to_name[type_cls],
+        }
+
     @classmethod
     def get_functions(cls):
-        allowlist = ["get_order_details", "list_orders"]
+        allowlist = ["get_order_details", "list_orders", "cancel_order"]
         functions = []
         for name, func in inspect.getmembers(cls, inspect.isfunction):
             if name not in allowlist:
@@ -120,17 +135,12 @@ class OrderAPI:
             parameters = {}
             for arg_name, arg_type in func.__annotations__.items():
                 if arg_name == "return":
-                    return_type = arg_type
-                    if hasattr(return_type, "model_json_schema"):
-                        return_type = return_type.model_json_schema()
+                    if issubclass(arg_type, CustomBaseModel):
+                        return_type = arg_type.model_json_schema()
+                    else:
+                        return_type = cls._type_to_parameter(arg_type)
                 else:
-                    type_to_name = {
-                        str: "string",
-                        int: "integer",
-                    }
-                    parameters[arg_name] = {
-                        "type": type_to_name[arg_type],
-                    }
+                    parameters[arg_name] = cls._type_to_parameter(arg_type)
             functions.append({
                 "name": name,
                 "description": func.__doc__,
