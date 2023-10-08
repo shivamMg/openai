@@ -112,7 +112,11 @@ class OrderAPI:
 
     def cancel_order(self, order_id: int, confirmed: bool) -> str:
         """Cancel OUT_FOR_DELIVER order. confirmed represents whether user has confirmed cancellation. Return value tells whether cancellation was successful."""
-        return "Cancellation was successful."
+        return "Cancellation was successful."  # stubbed response
+
+    def help_center(self, query: str) -> str:
+        """Help center to answer queries that cannot be answered using other functions."""
+        return "To get order invoice go to Account > Orders > [Your order] > Download invoice."  # stubbed response. actual implementation will call a Retrieval Augmented Generation (RAG) model
 
     @staticmethod
     def _type_to_parameter(type_cls):
@@ -127,7 +131,7 @@ class OrderAPI:
 
     @classmethod
     def get_functions(cls):
-        allowlist = ["get_order_details", "list_orders", "cancel_order"]
+        allowlist = ["get_order_details", "list_orders", "cancel_order", "help_center"]
         functions = []
         for name, func in inspect.getmembers(cls, inspect.isfunction):
             if name not in allowlist:
