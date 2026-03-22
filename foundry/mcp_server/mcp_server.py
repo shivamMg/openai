@@ -10,6 +10,7 @@ import uvicorn
 from fastapi import FastAPI, Request, Response
 from fastapi.responses import JSONResponse
 from mcp.server.fastmcp import FastMCP
+from mcp.server.transport_security import TransportSecuritySettings
 
 logger = logging.getLogger(__name__)
 
@@ -19,7 +20,11 @@ base_dir = os.path.dirname(os.path.abspath(__file__))
 with open(os.path.join(base_dir, "db.json")) as f:
     db = json.load(f)
 
-mcp = FastMCP("Customer Service Tools")
+mcp = FastMCP(
+    "Retail MCP",
+    # Disable DNS rebinding protection to avoid "Invalid Host header" error in Azure Container Apps.
+    transport_security=TransportSecuritySettings(enable_dns_rebinding_protection=False),
+)
 
 # Safe math evaluator
 SAFE_OPS = {
@@ -307,25 +312,7 @@ def health():
 
 @app.post("/tools")
 async def tools(request: Request):
-    """OpenAI function_call compatible endpoint.
-
-    Request:
-        {
-            "type": "function_call",
-            "id": "fc_123",
-            "call_id": "call_123",
-            "name": "calculate",
-            "arguments": "{\"expression\": \"2 + 3\"}"
-        }
-
-    Response (200):
-        {
-            "type": "function_call_output",
-            "id": "fc_123",
-            "call_id": "call_123",
-            "output": "{\"result\": 5}"
-        }
-    """
+    """OpenAI function_call compatible endpoint."""
     body = await request.json()
     name = body.get("name")
     call_id = body.get("call_id") or f"call_{uuid.uuid4().hex[:24]}"

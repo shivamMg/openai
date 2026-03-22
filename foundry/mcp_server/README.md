@@ -1,21 +1,27 @@
-# Customer Service MCP Server
+# Retail MCP Server
 
 MCP server implementing customer service tools (order management, user lookup, product catalog) over Streamable HTTP transport.
 
-## Tools
-
-16 tools available: `calculate`, `find_user_id_by_email`, `find_user_id_by_name_zip`, `list_all_product_types`, `get_product_details`, `get_user_details`, `get_order_details`, `cancel_pending_order`, `modify_pending_order_items`, `modify_pending_order_payment`, `modify_pending_order_address`, `modify_user_address`, `exchange_delivered_order_items`, `return_delivered_order_items`, `transfer_to_human_agents`.
+| File | Description |
+|------|-------------|
+| `mcp_server.py` | Server to expose MCP `/mcp` and OpenAI `/tools` endpoints |
+| `db.json` | Mock database (users, orders, products) |
+| `requirements.txt` | Python dependencies |
+| `Dockerfile` | Container image definition |
+| `deploy_to_azure.bicep` | Azure infrastructure (ACR + Container App) |
+| `deploy_to_azure.ps1` | One-command deploy/redeploy script |
 
 ## Run Locally
 
 ```bash
 pip install -r requirements.txt
-MCP_API_KEY=your-secret-key python mcp_server.py
+$env:MCP_API_KEY="your-secret-key"  # powershell
+python mcp_server.py
 ```
 
 Server starts at `http://localhost:8000`. Health check: `GET /health`.
 
-## Run with Docker
+### Run with Docker
 
 ```bash
 docker build -t mcp-server .
@@ -24,51 +30,57 @@ docker run -p 8000:8000 -e MCP_API_KEY=your-secret-key mcp-server
 
 ## Deploy to Azure Container Apps
 
-Prerequisites: [Azure CLI](https://learn.microsoft.com/en-us/cli/azure/install-azure-cli), an Azure subscription.
+Prerequisites: [Azure CLI](https://learn.microsoft.com/en-us/cli/azure/install-azure-cli), an Azure subscription, PowerShell.
 
-```bash
-# Set variables
-RESOURCE_GROUP=mcp-server-rg
-LOCATION=eastus
-MCP_API_KEY=your-secret-key
-
-# Create resource group
-az group create -n $RESOURCE_GROUP -l $LOCATION
-
-# Deploy infrastructure (ACR + Container App Environment + Container App)
-az deployment group create -g $RESOURCE_GROUP \
-  --template-file deploy_to_azure.bicep \
-  --parameters mcpApiKey=$MCP_API_KEY
-
-# Get ACR name from outputs
-ACR_NAME=$(az deployment group show -g $RESOURCE_GROUP -n deploy_to_azure \
-  --query properties.outputs.acrName.value -o tsv)
-
-# Build and push image to ACR
-az acr build -t mcp-server:latest -r $ACR_NAME .
-
-# Update container app with the built image
-az containerapp update -n mcp-server -g $RESOURCE_GROUP \
-  --image ${ACR_NAME}.azurecr.io/mcp-server:latest
-
-# Get the app URL
-az containerapp show -n mcp-server -g $RESOURCE_GROUP \
-  --query properties.configuration.ingress.fqdn -o tsv
+```powershell
+.\deploy_to_azure.ps1 -Subscription "your-azure-subscription" -ResourceGroup "your-rg" -McpApiKey "your-secret-key"
 ```
 
-## Environment Variables
+The script handles everything: resource group creation, Bicep infrastructure deployment (ACR + Container App), Docker image build, container app update, and health check verification. Rerun the same command to redeploy after code changes.
 
-| Variable | Description |
-|----------|-------------|
-| `MCP_API_KEY` | API key for authentication (checked via `X-MCP-API-Key` header) |
-| `PORT` | Server port (default: `8000`) |
+## Endpoints
 
-## MCP Client Configuration
+| Endpoint | Method | Auth | Description |
+|----------|--------|------|-------------|
+| `/health` | GET | No | Health check |
+| `/mcp/` | POST | Yes | MCP Streamable HTTP transport |
+| `/tools` | POST | Yes | OpenAI function-call compatible endpoint |
+
+For authentication, set `X-MCP-API-Key` header to the value of `MCP_API_KEY` env var.
+
+### `/tools` endpoint
+
+Request:
+```json
+{
+  "type": "function_call",
+  "id": "fc_123",
+  "call_id": "call_123",
+  "name": "calculate",
+  "arguments": "{\"expression\": \"2 + 3\"}"
+}
+```
+
+Response:
+```json
+{
+  "type": "function_call_output",
+  "id": "fc_123",
+  "call_id": "call_123",
+  "output": "{\"result\": 5}"
+}
+```
+
+### Available tools
+
+16 tools available: `calculate`, `find_user_id_by_email`, `find_user_id_by_name_zip`, `list_all_product_types`, `get_product_details`, `get_user_details`, `get_order_details`, `cancel_pending_order`, `modify_pending_order_items`, `modify_pending_order_payment`, `modify_pending_order_address`, `modify_user_address`, `exchange_delivered_order_items`, `return_delivered_order_items`, `transfer_to_human_agents`.
+
+### MCP Client Configuration
 
 ```json
 {
   "mcpServers": {
-    "customer-service": {
+    "retail-mcp": {
       "url": "https://<your-app>.azurecontainerapps.io/mcp/",
       "headers": {
         "X-MCP-API-Key": "your-secret-key"
