@@ -5,6 +5,7 @@ import logging
 import operator
 import uuid
 from contextlib import asynccontextmanager
+from datetime import datetime
 
 import uvicorn
 from fastapi import FastAPI, Request, Response
@@ -277,6 +278,106 @@ def return_delivered_order_items(order_id: str, item_ids: list[str], payment_met
     return json.dumps(order)
 
 
+@mcp.tool(
+    description="List recent orders for a user, optionally filtered by date range. "
+    "This allows the agent to identify the correct order when the user only mentions product details or approximate timing."
+)
+def list_user_orders(
+    user_id: str, from_date: str = "", to_date: str = "", limit: int = 10
+) -> str:
+    if user_id not in db["users"]:
+        return json.dumps({"error": "User not found"})
+    user = db["users"][user_id]
+    order_ids = user.get("orders", [])
+    orders = []
+    for oid in order_ids:
+        order = db["orders"].get(oid)
+        if not order:
+            continue
+        # Date filtering using delivered_at when available
+        if from_date or to_date:
+            order_date_str = order.get("delivered_at")
+            if not order_date_str:
+                # Include orders with no date (e.g. pending) only if no date filter is set
+                continue
+            try:
+                order_date = datetime.fromisoformat(order_date_str)
+                if from_date and order_date < datetime.fromisoformat(from_date):
+                    continue
+                if to_date and order_date > datetime.fromisoformat(to_date):
+                    continue
+            except ValueError:
+                continue
+        orders.append(order)
+        if len(orders) >= limit:
+            break
+    return json.dumps(orders)
+
+
+@mcp.tool(
+    description="Verify return eligibility and calculate fees based on store policy. "
+    "Call this after you know order_id, item_ids, and reason to check if a return is allowed "
+    "and what options are available. This tool evaluates return windows, category-specific rules, "
+    "user tier benefits, and restocking fees."
+)
+def policy_verify_return(order_id: str, item_ids: list[str], reason: str) -> str:
+    VALID_REASONS = ("unwanted", "wrong_item", "size_issue", "defective", "other")
+    if reason not in VALID_REASONS:
+        return json.dumps({"error": f"Invalid reason. Must be one of: {', '.join(VALID_REASONS)}"})
+    if order_id not in db["orders"]:
+        return json.dumps({"error": "Order not found"})
+    order = db["orders"][order_id]
+    if order.get("status") != "delivered":
+        return json.dumps(
+            {"error": f"Order is '{order.get('status')}', only delivered orders are eligible for return"}
+        )
+    # Determine user tier
+    user = db["users"].get(order.get("user_id", ""), {})
+    tier = user.get("tier", "standard")
+    # Return window: 30 days standard, 60 days for gold tier
+    return_window_days = 60 if tier == "gold" else 30
+    delivered_at_str = order.get("delivered_at")
+    if delivered_at_str:
+        try:
+            delivered_at = datetime.fromisoformat(delivered_at_str)
+            days_since = (datetime.now() - delivered_at).days
+            if days_since > return_window_days:
+                return json.dumps({
+                    "eligible": False,
+                    "reason": f"Return window expired. {days_since} days since delivery exceeds {return_window_days}-day limit.",
+                })
+        except ValueError:
+            pass
+    # Validate items exist in the order
+    refund_total = 0.0
+    items_detail = []
+    for item_id in item_ids:
+        item = next((i for i in order["items"] if i["item_id"] == item_id), None)
+        if not item:
+            return json.dumps({"error": f"Item {item_id} not found in order"})
+        items_detail.append(item)
+        refund_total += item["price"]
+    # Restocking fee: 0% for defective/wrong_item, 15% for unwanted/other/size_issue; gold tier always 0%
+    if reason in ("defective", "wrong_item") or tier == "gold":
+        restocking_fee_pct = 0.0
+    else:
+        restocking_fee_pct = 0.15
+    restocking_fee = round(refund_total * restocking_fee_pct, 2)
+    net_refund = round(refund_total - restocking_fee, 2)
+    return json.dumps({
+        "eligible": True,
+        "order_id": order_id,
+        "items": [{"item_id": i["item_id"], "name": i["name"], "price": i["price"]} for i in items_detail],
+        "reason": reason,
+        "user_tier": tier,
+        "return_window_days": return_window_days,
+        "restocking_fee_pct": restocking_fee_pct,
+        "restocking_fee": restocking_fee,
+        "refund_subtotal": round(refund_total, 2),
+        "net_refund": net_refund,
+    })
+
+
 @mcp.tool(description="Transfer the user to a human agent, with a summary of the user's issue.")
 def transfer_to_human_agents(summary: str) -> str:
     return json.dumps(
@@ -353,6 +454,18 @@ async def tools(request: Request):
 
 
 app.mount("/", mcp_http_app)
+
+
+def print_tools(server_url: str):
+    """Print JSON tool definitions for use in RFT job."""
+    headers = {"X-MCP-API-Key": MCP_API_KEY}
+    tool_names = sorted(mcp._tool_manager.list_tools(), key=lambda t: t.name)
+    definitions = [
+        {"name": t.name, "server_url": server_url, "headers": headers}
+        for t in tool_names
+    ]
+    print(json.dumps(definitions, indent=2))
+
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", 8000)))

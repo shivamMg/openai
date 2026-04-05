@@ -3,16 +3,30 @@ from collections import Counter
 from typing import Any, Dict, List
 
 
+class GraderConfig:
+    include_tools: List[str] = []
+    """include_tools can be specified to grade only a subset of tool calls (by function name). Otherwise grader will grade all calls."""
+
+
 def grade(sample: Dict, item: Dict) -> float:
+    config = GraderConfig()
+    return grade_with_config(sample, item, config)
+
+
+def grade_with_config(sample: Dict, item: Dict, config: GraderConfig) -> float:
     actual_calls = sample.get("output_tools") or []
-    if not actual_calls:
+    expected_calls = item["reference_tool_calls"]
+
+    if not actual_calls:  # just for /graders/run API, load from output_text since /graders/run API doesn't support output_tools yet
         try:
-            # load from output_text to make it work with /graders/run API which doesn't support output_tools yet
-            actual_calls = json.loads(sample["output_text"])["tool_calls"]
+            actual_calls = json.loads(sample["output_text"])["output_tools"]
         except (KeyError, json.JSONDecodeError):
             pass
 
-    expected_calls = item["expected_tool_calls"]
+    if config.include_tools:
+        actual_calls = [c for c in actual_calls if c["function"]["name"] in config.include_tools]
+        expected_calls = [c for c in item["reference_tool_calls"] if c["function"]["name"] in config.include_tools]
+
     return grade_tool_calls(actual_calls, expected_calls)
 
 
@@ -41,7 +55,7 @@ def grade_tool_calls(actual: List[Dict], expected: List[Dict]) -> float:
         for ei in remaining:
             if a_name == expected_names[ei]:
                 a_args = json.loads(actual[ai]["function"]["arguments"])
-                e_args = json.loads(expected[ei]["function"]["arguments"])
+                e_args = expected[ei]["function"]["arguments"]
                 arg_scores.append(_compare_args(a_args, e_args))
                 remaining.remove(ei)
                 break
