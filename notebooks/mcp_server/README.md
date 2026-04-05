@@ -19,7 +19,7 @@ $env:MCP_API_KEY="your-secret-key"  # powershell
 python mcp_server.py
 ```
 
-Server starts at `http://localhost:8000`. Health check: `GET /health`.
+Server starts at `http://localhost:8000`. Get tools: `GET /tools`.
 
 ### Run with Docker
 
@@ -42,13 +42,13 @@ The script handles everything: resource group creation, Bicep infrastructure dep
 
 | Endpoint | Method | Auth | Description |
 |----------|--------|------|-------------|
-| `/health` | GET | No | Health check |
 | `/mcp/` | POST | Yes | MCP Streamable HTTP transport |
 | `/tools` | POST | Yes | OpenAI function-call compatible endpoint |
+| `/tools` | GET | No | Returns list of tool names. Can be used for server health check. |
 
 For authentication, set `X-MCP-API-Key` header to the value of `MCP_API_KEY` env var.
 
-### `/tools` endpoint
+### POST `/tools` endpoint
 
 Request:
 ```json
@@ -74,6 +74,12 @@ Response:
 ### Available tools
 
 17 tools available: `calculate`, `find_user_id_by_email`, `find_user_id_by_name_zip`, `list_all_product_types`, `get_product_details`, `get_user_details`, `get_order_details`, `cancel_pending_order`, `modify_pending_order_items`, `modify_pending_order_payment`, `modify_pending_order_address`, `modify_user_address`, `exchange_delivered_order_items`, `return_delivered_order_items`, `list_user_orders`, `policy_verify_return`, `transfer_to_human_agents`.
+
+### Print Tool endpoints for RFT job
+
+```bash
+python -c "from mcp_server import tool_endpoints; print(tool_endpoints())"
+```
 
 ### MCP Client Configuration
 

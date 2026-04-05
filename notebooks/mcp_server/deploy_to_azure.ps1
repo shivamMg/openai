@@ -78,7 +78,7 @@ if ($LASTEXITCODE -ne 0) { throw "Container app update failed." }
 
 # Verify health
 Write-Host "`n=== Verifying deployment ===" -ForegroundColor Cyan
-$healthUrl = "$AppUrl/health"
+$healthUrl = "$AppUrl/tools"
 try {
     $response = Invoke-RestMethod -Uri $healthUrl -TimeoutSec 30
     if ($response.status -eq "ok") {
@@ -94,9 +94,3 @@ Write-Host "`n=== Deployment complete ===" -ForegroundColor Green
 Write-Host "  URL: $AppUrl"
 Write-Host "  MCP endpoint: $AppUrl/mcp/"
 Write-Host "  Tools endpoint: $AppUrl/tools"
-
-# Print tool definitions
-Write-Host "`n=== RFT Tools ===" -ForegroundColor Cyan
-$env:MCP_API_KEY = $McpApiKey
-python -c "from mcp_server import print_tools; print_tools('$AppUrl/tools')"
-Write-Host ""

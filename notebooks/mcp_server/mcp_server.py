@@ -15,8 +15,6 @@ from mcp.server.transport_security import TransportSecuritySettings
 
 logger = logging.getLogger(__name__)
 
-MCP_API_KEY = os.environ["MCP_API_KEY"]
-
 base_dir = os.path.dirname(os.path.abspath(__file__))
 with open(os.path.join(base_dir, "db.json")) as f:
     db = json.load(f)
@@ -399,21 +397,18 @@ app = FastAPI(lifespan=lifespan)
 
 @app.middleware("http")
 async def auth_middleware(request: Request, call_next):
-    if request.url.path == "/health":
+    if request.url.path == "/tools" and request.method == "GET":
         return await call_next(request)
+
+    MCP_API_KEY = os.environ["MCP_API_KEY"]
     if MCP_API_KEY and request.headers.get("x-mcp-api-key") != MCP_API_KEY:
         return Response("Unauthorized", status_code=401)
     return await call_next(request)
 
 
-@app.get("/health")
-def health():
-    return {"status": "ok"}
-
-
 @app.post("/tools")
-async def tools(request: Request):
-    """OpenAI function_call compatible endpoint."""
+async def invoke_tool(request: Request):
+    """OpenAI compatible endpoint for tool invocation."""
     body = await request.json()
     name = body.get("name")
     call_id = body.get("call_id") or f"call_{uuid.uuid4().hex[:24]}"
@@ -453,18 +448,27 @@ async def tools(request: Request):
     return response
 
 
-app.mount("/", mcp_http_app)
+@app.get("/tools")
+async def list_tools(request: Request):
+    tools = sorted(mcp._tool_manager.list_tools(), key=lambda t: t.name)
+    return [t.name for t in tools]
 
 
-def print_tools(server_url: str):
-    """Print JSON tool definitions for use in RFT job."""
-    headers = {"X-MCP-API-Key": MCP_API_KEY}
-    tool_names = sorted(mcp._tool_manager.list_tools(), key=lambda t: t.name)
-    definitions = [
+def tool_endpoints():
+    """Print JSON tool endpoints for use in RFT job."""
+    from dotenv import load_dotenv
+    load_dotenv(os.path.join(base_dir, "../.env"))
+
+    server_url = os.environ["MCP_ENDPOINT"].rstrip("/") + "/tools"
+    headers = {"X-MCP-API-Key": os.environ["MCP_API_KEY"]}
+    tools = sorted(mcp._tool_manager.list_tools(), key=lambda t: t.name)
+    return [
         {"name": t.name, "server_url": server_url, "headers": headers}
-        for t in tool_names
+        for t in tools
     ]
-    print(json.dumps(definitions, indent=2))
+
+
+app.mount("/", mcp_http_app)
 
 
 if __name__ == "__main__":

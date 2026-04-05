@@ -4,7 +4,11 @@ from typing import Any, Dict, List
 
 
 class GraderConfig:
-    include_tools: List[str] = []
+    include_tools: List[str] = [
+        "find_user_id_by_email",
+        "find_user_id_by_name_zip",
+        "policy_verify_return",
+    ]
     """include_tools can be specified to grade only a subset of tool calls (by function name). Otherwise grader will grade all calls."""
 
 
