@@ -4,8 +4,9 @@ import ast
 import logging
 import operator
 import uuid
+import contextvars
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import uvicorn
 from fastapi import FastAPI, Request, Response
@@ -15,9 +16,10 @@ from mcp.server.transport_security import TransportSecuritySettings
 
 logger = logging.getLogger(__name__)
 
-base_dir = os.path.dirname(os.path.abspath(__file__))
-with open(os.path.join(base_dir, "db.json")) as f:
-    db = json.load(f)
+MCP_API_KEY_HEADER = "X-MCP-API-Key"
+MCP_READ_ONLY_HEADER = "X-MCP-Read-Only"
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
 
 mcp = FastMCP(
     "Retail MCP",
@@ -25,31 +27,51 @@ mcp = FastMCP(
     transport_security=TransportSecuritySettings(enable_dns_rebinding_protection=False),
 )
 
-# Safe math evaluator
-SAFE_OPS = {
-    ast.Add: operator.add,
-    ast.Sub: operator.sub,
-    ast.Mult: operator.mul,
-    ast.Div: operator.truediv,
-    ast.USub: operator.neg,
-    ast.UAdd: operator.pos,
-}
+# Context variable to indicate if the current request is read-only, set by auth_middleware based on MCP_READ_ONLY_HEADER.
+# Tools check this variable to determine if they should actually modify data or just return what would have been modified.
+read_only_var: contextvars.ContextVar[bool] = contextvars.ContextVar("read_only", default=False)
+
+db = load_db()
 
 
-def _safe_eval(node):
-    if isinstance(node, ast.Expression):
-        return _safe_eval(node.body)
-    if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)):
-        return node.value
-    if isinstance(node, ast.BinOp) and type(node.op) in SAFE_OPS:
-        return SAFE_OPS[type(node.op)](_safe_eval(node.left), _safe_eval(node.right))
-    if isinstance(node, ast.UnaryOp) and type(node.op) in SAFE_OPS:
-        return SAFE_OPS[type(node.op)](_safe_eval(node.operand))
-    raise ValueError("Unsupported expression")
+def load_db():
+    with open(os.path.join(BASE_DIR, "db.json")) as f:
+        _db = json.load(f)
+
+    # Shift all delivered_at dates to keep data relevant for policy_verify_return and other tools.
+    dates = [o["delivered_at"] for o in _db.get("orders", {}).values() if "delivered_at" in o]
+    if not dates:
+        return
+    offset = datetime.now() - datetime.fromisoformat(max(dates))
+    for order in _db["orders"].values():
+        if "delivered_at" in order:
+            order["delivered_at"] = (datetime.fromisoformat(order["delivered_at"]) + offset).isoformat()
+    return _db
 
 
 @mcp.tool(description="Calculate the result of a mathematical expression.")
 def calculate(expression: str) -> str:
+    # Safe math evaluator
+    SAFE_OPS = {
+        ast.Add: operator.add,
+        ast.Sub: operator.sub,
+        ast.Mult: operator.mul,
+        ast.Div: operator.truediv,
+        ast.USub: operator.neg,
+        ast.UAdd: operator.pos,
+    }
+
+    def _safe_eval(node):
+        if isinstance(node, ast.Expression):
+            return _safe_eval(node.body)
+        if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)):
+            return node.value
+        if isinstance(node, ast.BinOp) and type(node.op) in SAFE_OPS:
+            return SAFE_OPS[type(node.op)](_safe_eval(node.left), _safe_eval(node.right))
+        if isinstance(node, ast.UnaryOp) and type(node.op) in SAFE_OPS:
+            return SAFE_OPS[type(node.op)](_safe_eval(node.operand))
+        raise ValueError("Unsupported expression")
+    
     try:
         result = _safe_eval(ast.parse(expression, mode="eval"))
         return json.dumps({"result": result})
@@ -116,8 +138,8 @@ def cancel_pending_order(order_id: str, reason: str) -> str:
         return json.dumps(
             {"error": f"Order is '{order.get('status')}', only pending orders can be cancelled"}
         )
-    if reason not in ("no longer needed", "ordered by mistake"):
-        return json.dumps({"error": "Reason must be 'no longer needed' or 'ordered by mistake'"})
+    if read_only_var.get():
+        return json.dumps(order)
     order["status"] = "cancelled"
     total = sum(item["price"] for item in order["items"])
     pm = order["payment_history"][0]["payment_method_id"]
@@ -140,6 +162,8 @@ def modify_pending_order_items(
         )
     if len(item_ids) != len(new_item_ids):
         return json.dumps({"error": "item_ids and new_item_ids must have the same length"})
+    if read_only_var.get():
+        return json.dumps(order)
     old_total = sum(i["price"] for i in order["items"])
     for old_id, new_id in zip(item_ids, new_item_ids):
         item = next((i for i in order["items"] if i["item_id"] == old_id), None)
@@ -174,6 +198,8 @@ def modify_pending_order_payment(order_id: str, payment_method_id: str) -> str:
         return json.dumps(
             {"error": f"Order is '{order.get('status')}', only pending orders can be modified"}
         )
+    if read_only_var.get():
+        return json.dumps(order)
     order["payment_history"][0]["payment_method_id"] = payment_method_id
     return json.dumps(order)
 
@@ -189,6 +215,8 @@ def modify_pending_order_address(
         return json.dumps(
             {"error": f"Order is '{order.get('status')}', only pending orders can be modified"}
         )
+    if read_only_var.get():
+        return json.dumps(order)
     order["address"] = {
         "address1": address1,
         "address2": address2,
@@ -206,6 +234,8 @@ def modify_user_address(
 ) -> str:
     if user_id not in db["users"]:
         return json.dumps({"error": "User not found"})
+    if read_only_var.get():
+        return json.dumps(db["users"][user_id])
     db["users"][user_id]["address"] = {
         "address1": address1,
         "address2": address2,
@@ -230,6 +260,8 @@ def exchange_delivered_order_items(
         )
     if len(item_ids) != len(new_item_ids):
         return json.dumps({"error": "item_ids and new_item_ids must have the same length"})
+    if read_only_var.get():
+        return json.dumps(order)
     for old_id, new_id in zip(item_ids, new_item_ids):
         item = next((i for i in order["items"] if i["item_id"] == old_id), None)
         if not item:
@@ -263,6 +295,8 @@ def return_delivered_order_items(order_id: str, item_ids: list[str], payment_met
         return json.dumps(
             {"error": f"Order is '{order.get('status')}', only delivered orders can be returned"}
         )
+    if read_only_var.get():
+        return json.dumps(order)
     refund = 0.0
     for item_id in item_ids:
         item = next((i for i in order["items"] if i["item_id"] == item_id), None)
@@ -332,8 +366,12 @@ def policy_verify_return(order_id: str, item_ids: list[str], reason: str) -> str
     # Determine user tier
     user = db["users"].get(order.get("user_id", ""), {})
     tier = user.get("tier", "standard")
-    # Return window: 30 days standard, 60 days for gold tier
-    return_window_days = 60 if tier == "gold" else 30
+    if tier == "vip":
+        return_window_days = 60
+    elif tier == "gold":
+        return_window_days = 30
+    else:
+        return_window_days = 7
     delivered_at_str = order.get("delivered_at")
     if delivered_at_str:
         try:
@@ -355,8 +393,8 @@ def policy_verify_return(order_id: str, item_ids: list[str], reason: str) -> str
             return json.dumps({"error": f"Item {item_id} not found in order"})
         items_detail.append(item)
         refund_total += item["price"]
-    # Restocking fee: 0% for defective/wrong_item, 15% for unwanted/other/size_issue; gold tier always 0%
-    if reason in ("defective", "wrong_item") or tier == "gold":
+    # Restocking fee: 0% for defective/wrong_item, 15% for unwanted/other/size_issue; gold and vip tiers always 0%
+    if reason in {"defective", "wrong_item"} or tier in {"vip", "gold"}:
         restocking_fee_pct = 0.0
     else:
         restocking_fee_pct = 0.15
@@ -401,8 +439,9 @@ async def auth_middleware(request: Request, call_next):
         return await call_next(request)
 
     MCP_API_KEY = os.environ["MCP_API_KEY"]
-    if MCP_API_KEY and request.headers.get("x-mcp-api-key") != MCP_API_KEY:
+    if MCP_API_KEY and request.headers.get(MCP_API_KEY_HEADER) != MCP_API_KEY:
         return Response("Unauthorized", status_code=401)
+    read_only_var.set(request.headers.get(MCP_READ_ONLY_HEADER).lower() == "true")
     return await call_next(request)
 
 
@@ -457,10 +496,13 @@ async def list_tools(request: Request):
 def tool_endpoints():
     """Print JSON tool endpoints for use in RFT job."""
     from dotenv import load_dotenv
-    load_dotenv(os.path.join(base_dir, "../.env"))
+    load_dotenv(os.path.join(BASE_DIR, "../.env"))
 
     server_url = os.environ["MCP_ENDPOINT"].rstrip("/") + "/tools"
-    headers = {"X-MCP-API-Key": os.environ["MCP_API_KEY"]}
+    headers = {
+        MCP_API_KEY_HEADER: os.environ["MCP_API_KEY"],
+        MCP_READ_ONLY_HEADER: "true"
+    }
     tools = sorted(mcp._tool_manager.list_tools(), key=lambda t: t.name)
     return [
         {"name": t.name, "server_url": server_url, "headers": headers}

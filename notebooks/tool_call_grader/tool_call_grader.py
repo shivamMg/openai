@@ -2,6 +2,8 @@ import json
 from collections import Counter
 from typing import Any, Dict, List
 
+from rouge_score import rouge_scorer
+
 
 class GraderConfig:
     include_tools: List[str] = [
@@ -9,7 +11,7 @@ class GraderConfig:
         "find_user_id_by_name_zip",
         "policy_verify_return",
     ]
-    """include_tools can be specified to grade only a subset of tool calls (by function name). Otherwise grader will grade all calls."""
+    """include_tools can be specified to grade only certain tools (by function name). Otherwise grader will grade all calls."""
 
 
 def grade(sample: Dict, item: Dict) -> float:
@@ -31,12 +33,28 @@ def grade_with_config(sample: Dict, item: Dict, config: GraderConfig) -> float:
         actual_calls = [c for c in actual_calls if c["function"]["name"] in config.include_tools]
         expected_calls = [c for c in item["reference_tool_calls"] if c["function"]["name"] in config.include_tools]
 
-    return grade_tool_calls(actual_calls, expected_calls)
+    # compare tool calls — partial score 0.0–0.9
+    tool_score = grade_tool_calls(actual_calls, expected_calls)
+
+    # compare output text — partial score 0.0–0.1
+    text_score = 0.0
+    output_text = sample.get("output_text", "")
+    reference_text = item.get("reference_response", "")
+    if output_text and reference_text:
+        text_score = grade_text(output_text, reference_text)
+
+    return round(tool_score + 0.1 * text_score, 2)
+
+
+def grade_text(actual_text: str, reference_text: str) -> float:
+    """ROUGE-L F-measure between two texts."""
+    scorer = rouge_scorer.RougeScorer(["rougeL"], use_stemmer=True)
+    return scorer.score(reference_text, actual_text)["rougeL"].fmeasure
 
 
 def grade_tool_calls(actual: List[Dict], expected: List[Dict]) -> float:
     if not expected and not actual:
-        return 1.0
+        return 0.9
     if not expected or not actual:
         return 0.0
 
@@ -49,10 +67,10 @@ def grade_tool_calls(actual: List[Dict], expected: List[Dict]) -> float:
         return 0.0
 
     name_score = matched_count / max(len(expected), len(actual))
-    if name_score < 1.0:
+    if name_score < 1.0:  # return early to avoid conflating name mismatches with argument mismatches
         return round(0.5 * name_score, 2)
 
-    # step 2: all names matched — compare arguments for 0.5–1.0
+    # step 2: all names matched — compare arguments for 0.5–0.9
     remaining = list(range(len(expected)))
     arg_scores = []
     for ai, a_name in enumerate(actual_names):
@@ -65,7 +83,7 @@ def grade_tool_calls(actual: List[Dict], expected: List[Dict]) -> float:
                 break
 
     avg_arg_score = sum(arg_scores) / len(arg_scores)
-    return round(0.5 + 0.5 * avg_arg_score, 2)
+    return round(0.5 + 0.4 * avg_arg_score, 2)
 
 
 def _compare_args(actual: Any, expected: Any) -> float:
