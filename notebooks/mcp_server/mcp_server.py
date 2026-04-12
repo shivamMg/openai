@@ -31,22 +31,21 @@ mcp = FastMCP(
 # Tools check this variable to determine if they should actually modify data or just return what would have been modified.
 read_only_var: contextvars.ContextVar[bool] = contextvars.ContextVar("read_only", default=False)
 
-db = load_db()
-
 
 def load_db():
     with open(os.path.join(BASE_DIR, "db.json")) as f:
         _db = json.load(f)
 
     # Shift all delivered_at dates to keep data relevant for policy_verify_return and other tools.
-    dates = [o["delivered_at"] for o in _db.get("orders", {}).values() if "delivered_at" in o]
-    if not dates:
-        return
-    offset = datetime.now() - datetime.fromisoformat(max(dates))
+    max_delivered_at = "2025-11-06T23:42:41.835913"  # max delivered_at in db.json
+    offset = datetime.now() - datetime.fromisoformat(max_delivered_at)
     for order in _db["orders"].values():
         if "delivered_at" in order:
             order["delivered_at"] = (datetime.fromisoformat(order["delivered_at"]) + offset).isoformat()
     return _db
+
+
+db = load_db()
 
 
 @mcp.tool(description="Calculate the result of a mathematical expression.")
@@ -380,7 +379,7 @@ def policy_verify_return(order_id: str, item_ids: list[str], reason: str) -> str
             if days_since > return_window_days:
                 return json.dumps({
                     "eligible": False,
-                    "reason": f"Return window expired. {days_since} days since delivery exceeds {return_window_days}-day limit.",
+                    "reason": f"Return window expired. {days_since} days since delivery exceeds {return_window_days}-day limit for {tier} tier.",
                 })
         except ValueError:
             pass
