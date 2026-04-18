@@ -440,7 +440,10 @@ async def auth_middleware(request: Request, call_next):
     MCP_API_KEY = os.environ["MCP_API_KEY"]
     if MCP_API_KEY and request.headers.get(MCP_API_KEY_HEADER) != MCP_API_KEY:
         return Response("Unauthorized", status_code=401)
-    read_only_var.set(request.headers.get(MCP_READ_ONLY_HEADER).lower() == "true")
+
+    # The read-only header is optional; default to writable mode when omitted.
+    read_only_header = request.headers.get(MCP_READ_ONLY_HEADER, "false")
+    read_only_var.set(read_only_header.lower() == "true")
     return await call_next(request)
 
 

@@ -81,11 +81,7 @@ Write-Host "`n=== Verifying deployment ===" -ForegroundColor Cyan
 $healthUrl = "$AppUrl/tools"
 try {
     $response = Invoke-RestMethod -Uri $healthUrl -TimeoutSec 30
-    if ($response.status -eq "ok") {
-        Write-Host "  Health check passed." -ForegroundColor Green
-    } else {
-        Write-Host "  Health check returned unexpected response: $($response | ConvertTo-Json)" -ForegroundColor Yellow
-    }
+    Write-Host "  Health check response: $($response | ConvertTo-Json)"
 } catch {
     Write-Host "  Health check failed (server may still be starting): $_" -ForegroundColor Yellow
 }
