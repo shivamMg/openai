@@ -16,14 +16,8 @@ def grade(sample: Dict, item: Dict) -> float:
 
 
 def grade_with_config(sample: Dict, item: Dict, config: GraderConfig) -> float:
-    actual_calls = sample.get("output_tools") or []
+    actual_calls = _extract_actual_calls(sample)
     expected_calls = item["reference_tool_calls"]
-
-    if not actual_calls:  # just for /graders/run API, load from output_text since /graders/run API doesn't support output_tools yet
-        try:
-            actual_calls = json.loads(sample["output_text"])["output_tools"]
-        except (KeyError, json.JSONDecodeError):
-            pass
 
     if config.include_tools:
         actual_calls = [c for c in actual_calls if c["function"]["name"] in config.include_tools]
@@ -34,10 +28,40 @@ def grade_with_config(sample: Dict, item: Dict, config: GraderConfig) -> float:
 
     # compare output text — partial score 0.0–0.1
     output_text = sample.get("output_text", "")
-    expected_text = item.get("reference_reply", "")
+    expected_text = item.get("reference_response", "")
     text_score = grade_text(output_text, expected_text)
 
     return round(0.9 * tool_score + 0.1 * text_score, 2)
+
+
+def _extract_actual_calls(sample: Dict) -> List[Dict]:
+    # Case 1: RFT job passes "output_tools" to grader.
+    actual_calls = sample.get("output_tools") or []
+    if actual_calls:
+        return actual_calls
+    
+    # Case 2: /graders/run API doesn't support passing "output_tools" so try to parse "output_text".
+    try:
+        return json.loads(sample.get("output_text", "{}"))["output_tools"]
+    except (KeyError, json.JSONDecodeError, TypeError):
+        pass
+
+    # Case 3: Evals run passes "mcp_call" inside "output".
+    output = sample.get("output") or []
+    extracted = []
+    for entry in output:
+        if not isinstance(entry, dict):
+            continue
+
+        if entry.get("type") == "mcp_call" and entry.get("name"):
+            extracted.append({
+                "function": {
+                    "name": entry.get("name"),
+                    "arguments": entry.get("arguments", "{}"),
+                }
+            })
+
+    return extracted
 
 
 def grade_text(actual_text: str, expected_text: str) -> float:
@@ -72,7 +96,16 @@ def grade_tool_calls(actual: List[Dict], expected: List[Dict]) -> float:
     for ai, a_name in enumerate(actual_names):
         for ei in remaining:
             if a_name == expected_names[ei]:
-                a_args = json.loads(actual[ai]["function"]["arguments"])
+                raw_a_args = actual[ai]["function"].get("arguments", {})
+                if isinstance(raw_a_args, str):
+                    try:
+                        a_args = json.loads(raw_a_args)
+                    except json.JSONDecodeError:
+                        a_args = {}
+                elif isinstance(raw_a_args, dict):
+                    a_args = raw_a_args
+                else:
+                    a_args = {}
                 e_args = expected[ei]["function"]["arguments"]
                 arg_scores.append(_compare_args(a_args, e_args))
                 remaining.remove(ei)

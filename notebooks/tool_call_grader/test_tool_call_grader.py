@@ -81,6 +81,35 @@ class TestGrade(unittest.TestCase):
         item = {"reference_tool_calls": [_ref("foo")]}
         self.assertAlmostEqual(_grade_all(sample, item), 0.1)
 
+    def test_grade_via_output_mcp_call(self):
+        """output calls are extracted from sample['output'][*] mcp_call entries."""
+        sample = {
+            "output": [
+                {
+                    "type": "mcp_call",
+                    "name": "search",
+                    "arguments": {"q": "hi"},
+                }
+            ]
+        }
+        item = {"reference_tool_calls": [_ref("search", {"q": "hi"})]}
+        self.assertAlmostEqual(_grade_all(sample, item), 1.0)
+
+    def test_grade_via_output_mcp_call_ignores_non_calls(self):
+        sample = {
+            "output": [
+                {"type": "message", "content": "hello"},
+                "not-a-dict",
+                {
+                    "type": "mcp_call",
+                    "name": "search",
+                    "arguments": {"q": "hi"},
+                },
+            ]
+        }
+        item = {"reference_tool_calls": [_ref("search", {"q": "hi"})]}
+        self.assertAlmostEqual(_grade_all(sample, item), 1.0)
+
     def test_name_mismatch(self):
         cases = [
             (
@@ -211,7 +240,7 @@ class TestGrade(unittest.TestCase):
         self.assertAlmostEqual(grade_with_config(sample, item, config), 1.0)
 
     def test_include_tools_no_match_in_filter(self):
-        """When include_tools filters out everything, both sides are empty → 0.9."""
+        """When include_tools filters out everything, both sides are empty → 1.0."""
         sample = {"output_tools": [_call("a", {"x": 1})]}
         item = {"reference_tool_calls": [_ref("a", {"x": 1})]}
         config = GraderConfig()
@@ -268,7 +297,7 @@ class TestCombinedGrade(unittest.TestCase):
         }
         item = {
             "reference_tool_calls": [_ref("search", {"q": "hello"})],
-            "reference_reply": "Order cancelled successfully",
+            "reference_response": "Order cancelled successfully",
         }
         score = _grade_all(sample, item)
         # tool_score=1.0, text_score=1.0 → 0.9*1.0 + 0.1*1.0 = 1.0
@@ -288,10 +317,10 @@ class TestCombinedGrade(unittest.TestCase):
         }
         item = {
             "reference_tool_calls": [_ref("search", {"q": "hello"})],
-            "reference_reply": "Your order has been cancelled successfully",
+            "reference_response": "Your order has been cancelled successfully",
         }
         score = _grade_all(sample, item)
-        # tool_score=0.9, text_score>0 → score > 0.9
+        # tool_score=1.0, text_score>0 → score > 0.9
         self.assertGreater(score, 0.9)
         self.assertLessEqual(score, 1.0)
 
@@ -302,7 +331,7 @@ class TestCombinedGrade(unittest.TestCase):
         }
         item = {
             "reference_tool_calls": [_ref("search", {"q": "hello"})],
-            "reference_reply": "Order cancelled successfully",
+            "reference_response": "Order cancelled successfully",
         }
         score = _grade_all(sample, item)
         # tool_score=0.0, text_score=1.0 → 0.0 + 0.1 = 0.1
