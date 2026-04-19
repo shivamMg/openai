@@ -96,16 +96,16 @@ def grade_tool_calls(actual: List[Dict], expected: List[Dict]) -> float:
     for ai, a_name in enumerate(actual_names):
         for ei in remaining:
             if a_name == expected_names[ei]:
-                raw_a_args = actual[ai]["function"].get("arguments", {})
+                # Parse raw arguments to dict if needed
+                raw_a_args = actual[ai]["function"]["arguments"]
                 if isinstance(raw_a_args, str):
                     try:
                         a_args = json.loads(raw_a_args)
                     except json.JSONDecodeError:
                         a_args = {}
-                elif isinstance(raw_a_args, dict):
-                    a_args = raw_a_args
                 else:
-                    a_args = {}
+                    a_args = raw_a_args
+
                 e_args = expected[ei]["function"]["arguments"]
                 arg_scores.append(_compare_args(a_args, e_args))
                 remaining.remove(ei)
