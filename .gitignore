@@ -134,3 +134,9 @@ transformers/runs/
 transformers/data/enwik8.gz:Zone.Identifier
 
 .vscode/
+
+# Generated Azure autoresearch data, per-run outputs, results, and plot
+autoresearch/data/*
+!autoresearch/data/.gitkeep
+autoresearch/results.tsv
+autoresearch/progress.png
