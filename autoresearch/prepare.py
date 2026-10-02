@@ -19,11 +19,13 @@ from rouge_score import rouge_scorer
 
 ROOT = Path(__file__).resolve().parent
 DATA = ROOT / "data"
-RUNS = DATA / "runs"
+RESULT = ROOT / "result"
+RUNS = RESULT / "runs"
 TRAIN_FILE = DATA / "train.jsonl"
 VALID_FILE = DATA / "validation.jsonl"
 EVAL_FILE = DATA / "eval.jsonl"
-RESULTS_FILE = ROOT / "results.tsv"
+RESULTS_FILE = RESULT / "results.tsv"
+PROGRESS_FILE = RESULT / "progress.png"
 MODEL = "gpt-4.1-nano"
 FT_MODEL = "gpt-4.1-nano-2025-04-14"
 SEED = 42
@@ -186,6 +188,7 @@ def current_commit():
 
 
 def append_result(row):
+    RESULT.mkdir(parents=True, exist_ok=True)
     new_file = not RESULTS_FILE.exists()
     with RESULTS_FILE.open("a", newline="", encoding="utf-8") as stream:
         writer = csv.DictWriter(stream, fieldnames=RESULT_COLUMNS, delimiter="\t", extrasaction="ignore")
@@ -241,9 +244,10 @@ def plot_results():
     axis.grid(alpha=0.25)
     axis.legend()
     figure.tight_layout()
-    figure.savefig(ROOT / "progress.png", dpi=150)
+    RESULT.mkdir(parents=True, exist_ok=True)
+    figure.savefig(PROGRESS_FILE, dpi=150)
     plt.close(figure)
-    print(f"Updated {ROOT / 'progress.png'}")
+    print(f"Updated {PROGRESS_FILE}")
 
 
 def main():
