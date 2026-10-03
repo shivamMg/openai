@@ -5,6 +5,7 @@ import csv
 import hashlib
 import json
 import os
+import re
 import statistics
 import time
 import uuid
@@ -25,7 +26,8 @@ TRAIN_FILE = DATA / "train.jsonl"
 VALID_FILE = DATA / "validation.jsonl"
 EVAL_FILE = DATA / "eval.jsonl"
 RESULTS_FILE = RESULT / "results.tsv"
-PROGRESS_FILE = RESULT / "progress.png"
+RESULTS_PLOT_FILE = RESULT / "results.png"
+RESULTS_REPORT_FILE = RESULT / "results.md"
 MODEL = "gpt-4.1-nano"
 FT_MODEL = "gpt-4.1-nano-2025-04-14"
 SEED = 42
@@ -214,6 +216,39 @@ def latest_base(fingerprint=None):
     return {**latest, "rouge_l": float(latest["rouge_l"])}
 
 
+def write_results_report(rows):
+    lines = ["# Autoresearch results", "", "![ROUGE-L results](results.png)", ""]
+    if not rows:
+        lines.append("No completed runs.")
+    else:
+        best = max(rows, key=lambda row: float(row["rouge_l"]))
+        columns = [
+            ("run_id", "run_id"), ("model_id", "model_id"), ("kind", "kind"),
+            ("epochs", "n_epochs"), ("lrm", "learning_rate_multiplier"),
+            ("batch size", "batch_size"), ("rouge_l", "rouge_l"),
+            ("delta_vs_base", "delta_vs_base"), ("eval_count", "eval_count"),
+            ("description", "description"),
+        ]
+        float_columns = {"learning_rate_multiplier", "rouge_l", "delta_vs_base"}
+        lines.extend([
+            "| " + " | ".join(label for label, _ in columns) + " |",
+            "| " + " | ".join("---" for _ in columns) + " |",
+        ])
+        for row in rows:
+            values = []
+            for _, key in columns:
+                raw_value = row.get(key, "")
+                value = f"{float(raw_value):.4f}" if key in float_columns and raw_value else str(raw_value or "—")
+                if key == "description":
+                    value = re.sub(r"(?<![\w.-])\d+\.\d+(?![\w.-])", lambda match: f"{float(match.group()):.4f}", value)
+                value = value.replace("|", "\\|").replace("\n", "<br>")
+                values.append(f"**{value}**" if row is best else value)
+            lines.append("| " + " | ".join(values) + " |")
+    RESULT.mkdir(parents=True, exist_ok=True)
+    RESULTS_REPORT_FILE.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    print(f"Updated {RESULTS_REPORT_FILE}")
+
+
 def plot_results():
     import matplotlib
     matplotlib.use("Agg")
@@ -232,6 +267,7 @@ def plot_results():
         return
     base = bases[-1]
     sfts = [row for row in sfts if row.get("baseline_run_id") == base["run_id"]]
+    write_results_report([base, *sfts])
     figure, axis = plt.subplots(figsize=(8, 4.5))
     axis.axhline(float(base["rouge_l"]), color="black", linestyle="--", label=f"Base ({float(base['rouge_l']):.4f})")
     markers = {"keep": "o", "discard": "x", "pending": "^", "crash": "s"}
@@ -245,9 +281,9 @@ def plot_results():
     axis.legend()
     figure.tight_layout()
     RESULT.mkdir(parents=True, exist_ok=True)
-    figure.savefig(PROGRESS_FILE, dpi=150)
+    figure.savefig(RESULTS_PLOT_FILE, dpi=150)
     plt.close(figure)
-    print(f"Updated {PROGRESS_FILE}")
+    print(f"Updated {RESULTS_PLOT_FILE}")
 
 
 def main():
