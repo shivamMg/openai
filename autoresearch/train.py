@@ -19,9 +19,9 @@ from openai import OpenAI
 import prepare
 
 # Agent-editable experiment knobs. None delegates batch-size choice to Azure.
-N_EPOCHS = 1
-LEARNING_RATE_MULTIPLIER = 0.1
-BATCH_SIZE = None
+N_EPOCHS = 2
+LEARNING_RATE_MULTIPLIER = 0.5
+BATCH_SIZE = 1
 TRAINING_TIER = "GlobalStandard"
 POLL_SECONDS = 30
 JOB_TIMEOUT_SECONDS = 6 * 60 * 60
