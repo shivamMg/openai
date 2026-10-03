@@ -1,0 +1,21 @@
+{
+  "run_id": "sft-20261003T182907121837Z-b4d4de",
+  "kind": "sft",
+  "deployment_name": "ar-ftjob-a92cf006bbdf46d89da010de04a8f610",
+  "model_id": "gpt-4.1-nano-2025-04-14.ft-a92cf006bbdf46d89da010de04a8f610-auto-e47c6763",
+  "job_id": "ftjob-a92cf006bbdf46d89da010de04a8f610",
+  "evaluation_fingerprint": "80b8f8225909e3567f76a53e56159d6d541071f60a9969f46986ff248648ad4e",
+  "eval_count": 0,
+  "rouge_l": null,
+  "status": "failed",
+  "error": "Error code: 500 - {'error': {'message': 'The server had an error while processing your request. Sorry about that!', 'type': 'server_error', 'param': None, 'code': None}}",
+  "started_at": "2026-10-03T18:29:07.123152+00:00",
+  "finished_at": "2026-10-03T18:29:12.998281+00:00",
+  "total_seconds": 22622.707483,
+  "config": {
+    "model": "gpt-4.1-nano",
+    "system_prompt": "Summarize the following news article in concise, factual bullet points, preserving the key information.",
+    "temperature": 0,
+    "max_tokens": 256
+  }
+}
