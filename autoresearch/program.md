@@ -22,7 +22,7 @@ Base evaluation calls the existing deployment name `gpt-4.1-nano`; it does not c
 ## Experiment loop
 
 1. Ask the user to confirm Azure fine-tuning and inference charges. Do not provision infrastructure or run unlimited experiments. Azure jobs take minutes to hours; there is no five-minute GPU budget.
-2. Start a fresh `autoresearch/<tag>` branch from the current worktree state only after checking for uncommitted changes. Do not overwrite or reset unrelated user changes.
+2. Run the experiment directly on `main`; do not create a separate research branch. Before starting, verify that `main` is checked out and inspect the worktree for uncommitted changes. Do not overwrite, reset, or include unrelated user changes in experiment commits.
 3. Run `.venv/bin/python train.py` once for the baseline SFT. Maximum three submitted jobs per session, failed submissions included. Resuming with `--job-id` does not spend another slot.
 4. Only edit the experiment knobs at the top of `train.py` (`N_EPOCHS`, `LEARNING_RATE_MULTIPLIER`, `BATCH_SIZE`). Each candidate trains from the same base model and data; never modify the prompt, samples, decoding, scorer, or evaluation set.
 5. Commit each hypothesis, run one experiment to completion, and compare its mean ROUGE-L F1 with the fixed base score and best prior SFT score. Higher is better. Keep a change only when it improves the score or gives a worthwhile simplification; otherwise revert only your own `train.py` edit. Git rollback does not undo Azure jobs or charges.
