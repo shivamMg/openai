@@ -1,0 +1,64 @@
+{
+  "run_id": "sft-20261004T032116487071Z-0a218b",
+  "kind": "sft",
+  "deployment_name": "ar-ftjob-a92cf006bbdf46d89da010de04a8f610",
+  "model_id": "gpt-4.1-nano-2025-04-14.ft-a92cf006bbdf46d89da010de04a8f610-auto-e47c6763",
+  "job_id": "ftjob-a92cf006bbdf46d89da010de04a8f610",
+  "evaluation_fingerprint": "80b8f8225909e3567f76a53e56159d6d541071f60a9969f46986ff248648ad4e",
+  "eval_count": 97,
+  "eval_total": 100,
+  "eval_failure_count": 0,
+  "eval_failures": [],
+  "content_filter_count": 3,
+  "content_filter_rows": [
+    {
+      "id": "38a588f8c5b1e97df3a303bd863e004769d8dac3",
+      "stage": "request",
+      "error_code": "content_filter"
+    },
+    {
+      "id": "a12d0b27034b5441d447953f404868a1251fcc49",
+      "stage": "request",
+      "error_code": "content_filter"
+    },
+    {
+      "id": "6977ce0cd7ca3f614ea06783822586c0b79a37e3",
+      "stage": "request",
+      "error_code": "content_filter"
+    }
+  ],
+  "server_error_retry_count": 3,
+  "server_error_retries": [
+    {
+      "id": "5ae791c9aedc8d308bbfe41b2e55be0e7d5d0d23",
+      "status_code": 500,
+      "retry": 1,
+      "delay_seconds": 2
+    },
+    {
+      "id": "e22e9def7c59c31474d6dfb71158c56f01e95526",
+      "status_code": 500,
+      "retry": 1,
+      "delay_seconds": 2
+    },
+    {
+      "id": "de6c89a6df60591148429a916d50983de1f42714",
+      "status_code": 500,
+      "retry": 1,
+      "delay_seconds": 2
+    }
+  ],
+  "rouge_l": 0.2140144008208494,
+  "status": "completed",
+  "error": "",
+  "started_at": "2026-10-04T03:21:16.488203+00:00",
+  "finished_at": "2026-10-04T03:23:11.828871+00:00",
+  "total_seconds": 54552.072805,
+  "config": {
+    "model": "gpt-4.1-nano",
+    "system_prompt": "Summarize the following news article in concise, factual bullet points, preserving the key information.",
+    "temperature": 0,
+    "max_tokens": 256
+  },
+  "baseline_run_id": "base-20261002T155033700805Z-a3d40d"
+}
