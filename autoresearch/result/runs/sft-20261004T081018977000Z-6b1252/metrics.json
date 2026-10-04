@@ -1,0 +1,82 @@
+{
+  "run_id": "sft-20261004T081018977000Z-6b1252",
+  "kind": "sft",
+  "deployment_name": "ar-ftjob-c507565f095a4fcbbe45be3975940de0",
+  "model_id": "gpt-4.1-nano-2025-04-14.ft-c507565f095a4fcbbe45be3975940de0-auto-7305d66f",
+  "job_id": "ftjob-c507565f095a4fcbbe45be3975940de0",
+  "evaluation_fingerprint": "80b8f8225909e3567f76a53e56159d6d541071f60a9969f46986ff248648ad4e",
+  "eval_count": 94,
+  "eval_total": 100,
+  "eval_failure_count": 0,
+  "eval_failures": [],
+  "content_filter_count": 6,
+  "content_filter_rows": [
+    {
+      "id": "38a588f8c5b1e97df3a303bd863e004769d8dac3",
+      "stage": "request",
+      "error_code": "content_filter"
+    },
+    {
+      "id": "a12d0b27034b5441d447953f404868a1251fcc49",
+      "stage": "request",
+      "error_code": "content_filter"
+    },
+    {
+      "id": "048b04230002a98f36bc94b37bcde361940ad254",
+      "stage": "response",
+      "finish_reason": "content_filter"
+    },
+    {
+      "id": "773bd5013304547c2d60264ec05b0d0a529a5bbd",
+      "stage": "response",
+      "finish_reason": "content_filter"
+    },
+    {
+      "id": "6977ce0cd7ca3f614ea06783822586c0b79a37e3",
+      "stage": "request",
+      "error_code": "content_filter"
+    },
+    {
+      "id": "a803152d6189fa0166ec03646d7866a1c0083abf",
+      "stage": "response",
+      "finish_reason": "content_filter"
+    }
+  ],
+  "server_error_retry_count": 3,
+  "server_error_retries": [
+    {
+      "id": "7de229a5512ad8288f1012fd31ebe504edaf8e3d",
+      "error_type": "server_error",
+      "status_code": 500,
+      "retry": 1,
+      "delay_seconds": 2
+    },
+    {
+      "id": "7de229a5512ad8288f1012fd31ebe504edaf8e3d",
+      "error_type": "server_error",
+      "status_code": 500,
+      "retry": 2,
+      "delay_seconds": 4
+    },
+    {
+      "id": "bc92f08cb6ec54303296d2de7108e189235a4330",
+      "error_type": "server_error",
+      "status_code": 500,
+      "retry": 1,
+      "delay_seconds": 2
+    }
+  ],
+  "rouge_l": 0.22703425408062242,
+  "status": "completed",
+  "error": "",
+  "started_at": "2026-10-04T08:10:18.988923+00:00",
+  "finished_at": "2026-10-04T08:12:36.578816+00:00",
+  "total_seconds": 8567.005056,
+  "config": {
+    "model": "gpt-4.1-nano",
+    "system_prompt": "Summarize the following news article in concise, factual bullet points, preserving the key information.",
+    "temperature": 0,
+    "max_tokens": 256
+  },
+  "baseline_run_id": "base-20261002T155033700805Z-a3d40d"
+}
