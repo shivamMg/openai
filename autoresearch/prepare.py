@@ -290,7 +290,8 @@ def write_results_report(rows):
     if not rows:
         lines.append("No completed runs.")
     else:
-        best = max(rows, key=lambda row: float(row["rouge_l"]))
+        eligible = [row for row in rows if row.get("decision") != "crash"]
+        best = max(eligible, key=lambda row: float(row["rouge_l"])) if eligible else None
         columns = [
             ("run_id", "run_id"), ("model_id", "model_id"), ("kind", "kind"),
             ("epochs", "n_epochs"), ("lrm", "learning_rate_multiplier"),
@@ -336,29 +337,35 @@ def plot_results():
 
     rows = read_results()
     valid = [r for r in rows if r["status"] == "completed" and r["eval_count"] == str(N_EVAL) and r["rouge_l"]]
+    # Reports show the requested experiment summary; retain the full ledger on disk.
+    requested = {("1", "0.1"), ("2", "0.1"), ("3", "0.1"), ("2", "1.0"), ("2", "0.5")}
+    sft_rows = [r for r in valid if r["kind"] == "sft" and r.get("decision") != "crash"
+                and (r["n_epochs"], r["learning_rate_multiplier"]) in requested]
+    baseline_id = next((r.get("baseline_run_id") for r in sft_rows if r["n_epochs"] == "1"), None)
+    summary_bases = [r for r in valid if r["kind"] == "base" and r["run_id"] == baseline_id]
+    valid = [*summary_bases, *sft_rows]
     if not valid:
         return
-    # Plot the most recent evaluation protocol only; do not mix incompatible runs.
-    fingerprint = valid[-1]["fingerprint"]
-    valid = [r for r in valid if r["fingerprint"] == fingerprint]
-    bases = [r for r in valid if r["kind"] == "base"]
-    sfts = [r for r in valid if r["kind"] == "sft"]
-    if not bases:
-        return
-    base = bases[-1]
-    sfts = [row for row in sfts if row.get("baseline_run_id") == base["run_id"]]
-    write_results_report([base, *sfts])
-    figure, axis = plt.subplots(figsize=(8, 4.5))
-    axis.axhline(float(base["rouge_l"]), color="black", linestyle="--", label=f"Base ({float(base['rouge_l']):.4f})")
-    markers = {"keep": "o", "discard": "x", "pending": "^", "crash": "s"}
+    write_results_report(valid)
+    figure, axis = plt.subplots(figsize=(12, 6))
+    sfts = [row for row in valid if row["kind"] == "sft"]
     positions = {row["run_id"]: i for i, row in enumerate(sfts, start=1)}
-    for decision, marker in markers.items():
+    baseline = summary_bases[0]
+    axis.axhline(float(baseline["rouge_l"]), color="black", linestyle="--", alpha=0.7, label=f"Baseline ({float(baseline['rouge_l']):.4f})")
+    markers = {"keep": ("o", "C0"), "discard": ("x", "C1"), "pending": ("^", "C2")}
+    for decision, (marker, color) in markers.items():
         group = [row for row in sfts if row["decision"] == decision]
         if group:
-            axis.scatter([positions[row["run_id"]] for row in group], [float(row["rouge_l"]) for row in group], marker=marker, label=decision)
+            axis.scatter([positions[row["run_id"]] for row in group], [float(row["rouge_l"]) for row in group], color=color, marker=marker, label=decision)
+    labels = []
+    for row in sfts:
+        labels.append(f"epochs={row['n_epochs']}\nLRM={row['learning_rate_multiplier']}\nbatch={row['batch_size']}")
+        axis.annotate(f"{float(row['rouge_l']):.4f}", (positions[row["run_id"]], float(row["rouge_l"])), xytext=(0, 8), textcoords="offset points", ha="center")
+    axis.set_xticks(list(positions.values()), labels)
     axis.set(xlabel="SFT experiment", ylabel="Mean ROUGE-L F1", title="CNN/DailyMail summarization")
+    axis.margins(x=0.08, y=0.2)
     axis.grid(alpha=0.25)
-    axis.legend()
+    axis.legend(loc="center left", fontsize=8)
     figure.tight_layout()
     RESULT.mkdir(parents=True, exist_ok=True)
     figure.savefig(RESULTS_PLOT_FILE, dpi=150)
