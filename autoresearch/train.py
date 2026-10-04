@@ -205,6 +205,10 @@ def run(job_id=None):
             raise RuntimeError("Resume refused: job ID is not in this local session's submission ledger")
 
     job_record = next(entry for entry in ledger["jobs"] if entry["job_id"] == job_id)
+    job_hyperparameters = job_record["hyperparameters"]
+    run_epochs = job_hyperparameters["n_epochs"]
+    run_lr = job_hyperparameters["learning_rate_multiplier"]
+    run_batch_size = job_hyperparameters.get("batch_size", "auto")
     job = poll_job(client, job_id)
     job_record["status"] = job.status
     job_record["fine_tuned_model"] = job.fine_tuned_model
@@ -222,8 +226,8 @@ def run(job_id=None):
         # Azure may report provisioned slightly before the inference endpoint is ready.
         time.sleep(20)
         return prepare.score_deployment(
-            deployment_name, "sft", job_id=job_id, model_id=model_id, epochs=N_EPOCHS,
-            lr=LEARNING_RATE_MULTIPLIER, batch_size=BATCH_SIZE if BATCH_SIZE is not None else "auto",
+            deployment_name, "sft", job_id=job_id, model_id=model_id, epochs=run_epochs,
+            lr=run_lr, batch_size=run_batch_size,
             description=f"SFT; baseline {baseline['run_id']}",
             experiment_seconds=(datetime.now(timezone.utc) - datetime.fromisoformat(job_record["created_at"])).total_seconds(),
         )
