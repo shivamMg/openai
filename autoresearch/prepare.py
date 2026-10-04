@@ -15,7 +15,7 @@ from pathlib import Path
 
 from datasets import load_dataset
 from dotenv import load_dotenv
-from openai import OpenAI
+from openai import APIStatusError, BadRequestError, OpenAI
 from rouge_score import rouge_scorer
 
 ROOT = Path(__file__).resolve().parent
@@ -33,6 +33,8 @@ FT_MODEL = "gpt-4.1-nano-2025-04-14"
 SEED = 42
 N_TRAIN, N_VALID, N_EVAL = 1000, 100, 100
 MAX_TOKENS = 256
+EVAL_5XX_MAX_RETRIES = 3
+EVAL_5XX_RETRY_BASE_SECONDS = 2
 SYSTEM_PROMPT = "Summarize the following news article in concise, factual bullet points, preserving the key information."
 RESULT_COLUMNS = [
     "run_id", "kind", "commit", "deployment_name", "model_id", "job_id",
@@ -101,7 +103,15 @@ def evaluation_fingerprint():
 def client():
     load_dotenv(ROOT / ".env")
     endpoint = os.environ["AZURE_OPENAI_ENDPOINT"].rstrip("/")
-    return OpenAI(api_key=os.environ["AZURE_OPENAI_API_KEY"], base_url=endpoint + "/openai/v1/")
+    return OpenAI(api_key=os.environ["AZURE_OPENAI_API_KEY"], base_url=endpoint + "/openai/v1/", max_retries=0)
+
+
+def is_content_filter_error(exc):
+    return isinstance(exc, BadRequestError) and exc.code == "content_filter"
+
+
+def is_server_error(exc):
+    return isinstance(exc, APIStatusError) and 500 <= exc.status_code < 600
 
 
 def score_deployment(deployment, kind, *, job_id="", model_id="", epochs="", lr="", batch_size="", description="", experiment_seconds=None):
@@ -116,18 +126,57 @@ def score_deployment(deployment, kind, *, job_id="", model_id="", epochs="", lr=
     fingerprint = evaluation_fingerprint()
     predictions_path = run_dir / "predictions.jsonl"
     scores = []
+    content_filter_rows = []
+    server_error_retries = []
+    eval_failures = []
     base = latest_base(fingerprint) if kind == "sft" else None
     try:
         aoai = client()
         with predictions_path.open("w", encoding="utf-8") as output:
             for row in eval_rows:
-                response = aoai.chat.completions.create(
-                    model=deployment,
-                    messages=[{"role": "system", "content": SYSTEM_PROMPT}, {"role": "user", "content": row["article"]}],
-                    temperature=0,
-                    max_tokens=MAX_TOKENS,
-                )
+                response = None
+                for attempt in range(EVAL_5XX_MAX_RETRIES + 1):
+                    try:
+                        response = aoai.chat.completions.create(
+                            model=deployment,
+                            messages=[{"role": "system", "content": SYSTEM_PROMPT}, {"role": "user", "content": row["article"]}],
+                            temperature=0,
+                            max_tokens=MAX_TOKENS,
+                        )
+                        break
+                    except Exception as exc:
+                        if is_content_filter_error(exc):
+                            content_filter_rows.append({"id": row["id"], "stage": "request", "error_code": exc.code})
+                            break
+                        if not is_server_error(exc):
+                            raise
+                        if attempt == EVAL_5XX_MAX_RETRIES:
+                            failure = {
+                                "id": row["id"], "status_code": exc.status_code,
+                                "attempts": attempt + 1, "error": str(exc),
+                            }
+                            eval_failures.append(failure)
+                            output.write(json.dumps({
+                                "id": row["id"], "reference": row["reference"], "prediction": None,
+                                "rouge_l": None, "finish_reason": None, "error": "server_error",
+                                "status_code": exc.status_code, "attempts": attempt + 1,
+                            }, ensure_ascii=False) + "\n")
+                            output.flush()
+                            print(f"eval row {row['id']}: HTTP {exc.status_code}; retries exhausted, skipping row", flush=True)
+                            break
+                        delay = EVAL_5XX_RETRY_BASE_SECONDS * (2 ** attempt)
+                        server_error_retries.append({
+                            "id": row["id"], "status_code": exc.status_code,
+                            "retry": attempt + 1, "delay_seconds": delay,
+                        })
+                        print(f"eval row {row['id']}: HTTP {exc.status_code}; retry {attempt + 1}/{EVAL_5XX_MAX_RETRIES} in {delay}s", flush=True)
+                        time.sleep(delay)
+                if response is None:
+                    continue
                 choice = response.choices[0]
+                if choice.finish_reason == "content_filter":
+                    content_filter_rows.append({"id": row["id"], "stage": "response", "finish_reason": choice.finish_reason})
+                    continue
                 prediction = choice.message.content or ""
                 score = SCORER.score(row["reference"], prediction)["rougeL"].fmeasure
                 scores.append(score)
@@ -136,6 +185,8 @@ def score_deployment(deployment, kind, *, job_id="", model_id="", epochs="", lr=
                     "rouge_l": score, "finish_reason": choice.finish_reason,
                 }, ensure_ascii=False) + "\n")
                 output.flush()
+        if not scores:
+            raise RuntimeError("Evaluation produced no successful rows")
         mean_score = statistics.fmean(scores)
         status = "completed"
         error = ""
@@ -147,6 +198,10 @@ def score_deployment(deployment, kind, *, job_id="", model_id="", epochs="", lr=
         meta = {
             "run_id": run_id, "kind": kind, "deployment_name": deployment, "model_id": model_id or deployment,
             "job_id": job_id, "evaluation_fingerprint": fingerprint, "eval_count": len(scores),
+            "eval_total": len(eval_rows), "eval_failure_count": len(eval_failures),
+            "eval_failures": eval_failures,
+            "content_filter_count": len(content_filter_rows), "content_filter_rows": content_filter_rows,
+            "server_error_retry_count": len(server_error_retries), "server_error_retries": server_error_retries,
             "rouge_l": mean_score, "status": status if "status" in locals() else "failed",
             "error": error if "error" in locals() else "interrupted",
             "started_at": started_at, "finished_at": datetime.now(timezone.utc).isoformat(),
@@ -165,7 +220,8 @@ def score_deployment(deployment, kind, *, job_id="", model_id="", epochs="", lr=
                 "learning_rate_multiplier": lr, "batch_size": batch_size,
                 "rouge_l": repr(mean_score) if meta["status"] == "completed" else "",
                 "delta_vs_base": repr(mean_score - base["rouge_l"]) if base and meta["status"] == "completed" else ("0" if kind == "base" and meta["status"] == "completed" else ""),
-                "eval_count": len(scores), "total_seconds": repr(meta["total_seconds"]), "status": meta["status"],
+                "eval_count": len(scores) + len(content_filter_rows) + len(eval_failures),
+                "total_seconds": repr(meta["total_seconds"]), "status": meta["status"],
                 "decision": "baseline" if kind == "base" else ("pending" if meta["status"] == "completed" else "crash"),
                 "description": description or error, "fingerprint": fingerprint,
                 "baseline_run_id": base["run_id"] if base else (run_id if kind == "base" else ""),
@@ -174,7 +230,10 @@ def score_deployment(deployment, kind, *, job_id="", model_id="", epochs="", lr=
                 meta["baseline_run_id"] = base["run_id"] if base else run_id
             (run_dir / "metrics.json").write_text(json.dumps(meta, indent=2) + "\n", encoding="utf-8")
             if meta["status"] == "completed":
-                print(f"rouge_l: {mean_score:.6f}  eval_count: {len(scores)}  run_id: {run_id}")
+                print(
+                    f"rouge_l: {mean_score:.6f}  eval_count: {len(scores)}/{len(eval_rows)}  "
+                    f"eval_failure_count: {len(eval_failures)}  content_filter_count: {len(content_filter_rows)}  run_id: {run_id}"
+                )
             plot_results()
     return run_id
 
@@ -238,7 +297,18 @@ def write_results_report(rows):
             values = []
             for _, key in columns:
                 raw_value = row.get(key, "")
-                value = f"{float(raw_value):.4f}" if key in float_columns and raw_value else str(raw_value or "—")
+                if key == "eval_count":
+                    metrics_path = RUNS / row["run_id"] / "metrics.json"
+                    try:
+                        metrics = json.loads(metrics_path.read_text(encoding="utf-8"))
+                    except (FileNotFoundError, json.JSONDecodeError):
+                        metrics = {}
+                    scored_match = re.search(r"\b(\d+) scored\b", row.get("description", ""))
+                    successful = metrics.get("eval_count", scored_match.group(1) if scored_match else raw_value)
+                    total = metrics.get("eval_total", N_EVAL if row["status"] == "completed" else raw_value)
+                    value = f"{successful}/{total}"
+                else:
+                    value = f"{float(raw_value):.4f}" if key in float_columns and raw_value else str(raw_value or "—")
                 if key == "description":
                     value = re.sub(r"(?<![\w.-])\d+\.\d+(?![\w.-])", lambda match: f"{float(match.group()):.4f}", value)
                 value = value.replace("|", "\\|").replace("\n", "<br>")
