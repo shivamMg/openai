@@ -15,7 +15,7 @@ from pathlib import Path
 
 from datasets import load_dataset
 from dotenv import load_dotenv
-from openai import APIStatusError, BadRequestError, OpenAI
+from openai import APIStatusError, APITimeoutError, BadRequestError, OpenAI
 from rouge_score import rouge_scorer
 
 ROOT = Path(__file__).resolve().parent
@@ -114,6 +114,14 @@ def is_server_error(exc):
     return isinstance(exc, APIStatusError) and 500 <= exc.status_code < 600
 
 
+def retryable_eval_error(exc):
+    if isinstance(exc, APITimeoutError):
+        return "timeout", None
+    if is_server_error(exc):
+        return "server_error", exc.status_code
+    return None
+
+
 def score_deployment(deployment, kind, *, job_id="", model_id="", epochs="", lr="", batch_size="", description="", experiment_seconds=None):
     """Evaluate all fixed examples; persist per-item outputs and aggregate metrics."""
     RUNS.mkdir(parents=True, exist_ok=True)
@@ -148,28 +156,30 @@ def score_deployment(deployment, kind, *, job_id="", model_id="", epochs="", lr=
                         if is_content_filter_error(exc):
                             content_filter_rows.append({"id": row["id"], "stage": "request", "error_code": exc.code})
                             break
-                        if not is_server_error(exc):
+                        error_details = retryable_eval_error(exc)
+                        if error_details is None:
                             raise
+                        error_type, status_code = error_details
                         if attempt == EVAL_5XX_MAX_RETRIES:
                             failure = {
-                                "id": row["id"], "status_code": exc.status_code,
+                                "id": row["id"], "error_type": error_type, "status_code": status_code,
                                 "attempts": attempt + 1, "error": str(exc),
                             }
                             eval_failures.append(failure)
                             output.write(json.dumps({
                                 "id": row["id"], "reference": row["reference"], "prediction": None,
-                                "rouge_l": None, "finish_reason": None, "error": "server_error",
-                                "status_code": exc.status_code, "attempts": attempt + 1,
+                                "rouge_l": None, "finish_reason": None, "error": error_type,
+                                "status_code": status_code, "attempts": attempt + 1,
                             }, ensure_ascii=False) + "\n")
                             output.flush()
-                            print(f"eval row {row['id']}: HTTP {exc.status_code}; retries exhausted, skipping row", flush=True)
+                            print(f"eval row {row['id']}: {error_type}; retries exhausted, skipping row", flush=True)
                             break
                         delay = EVAL_5XX_RETRY_BASE_SECONDS * (2 ** attempt)
                         server_error_retries.append({
-                            "id": row["id"], "status_code": exc.status_code,
+                            "id": row["id"], "error_type": error_type, "status_code": status_code,
                             "retry": attempt + 1, "delay_seconds": delay,
                         })
-                        print(f"eval row {row['id']}: HTTP {exc.status_code}; retry {attempt + 1}/{EVAL_5XX_MAX_RETRIES} in {delay}s", flush=True)
+                        print(f"eval row {row['id']}: {error_type}; retry {attempt + 1}/{EVAL_5XX_MAX_RETRIES} in {delay}s", flush=True)
                         time.sleep(delay)
                 if response is None:
                     continue

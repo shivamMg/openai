@@ -43,7 +43,7 @@ class EvaluationRetryTests(unittest.TestCase):
             with patch.object(prepare, "RUNS", root / "runs"), \
                     patch.object(prepare, "EVAL_FILE", eval_file), \
                     patch.object(prepare, "client", return_value=fake_client), \
-                    patch.object(prepare, "is_server_error", side_effect=lambda exc: hasattr(exc, "status_code")), \
+                    patch.object(prepare, "retryable_eval_error", side_effect=lambda exc: ("server_error", exc.status_code)), \
                     patch.object(prepare, "append_result", side_effect=appended.append), \
                     patch.object(prepare, "plot_results"), \
                     patch.object(prepare.time, "sleep"):
@@ -63,6 +63,36 @@ class EvaluationRetryTests(unittest.TestCase):
             self.assertEqual(predictions[0]["error"], "server_error")
             self.assertEqual(predictions[0]["attempts"], 4)
             self.assertIsNotNone(predictions[1]["rouge_l"])
+
+    def test_timeout_is_retried(self):
+        timeout = RuntimeError("timed out")
+        success = SimpleNamespace(choices=[SimpleNamespace(
+            finish_reason="stop", message=SimpleNamespace(content="A short summary."),
+        )])
+        fake_client = SimpleNamespace(
+            chat=SimpleNamespace(completions=FakeCompletions([timeout, success]))
+        )
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            eval_file = root / "eval.jsonl"
+            eval_file.write_text(json.dumps({
+                "id": "row", "article": "Article", "reference": "A short summary."
+            }) + "\n", encoding="utf-8")
+
+            with patch.object(prepare, "RUNS", root / "runs"), \
+                    patch.object(prepare, "EVAL_FILE", eval_file), \
+                    patch.object(prepare, "client", return_value=fake_client), \
+                    patch.object(prepare, "retryable_eval_error", return_value=("timeout", None)), \
+                    patch.object(prepare, "append_result"), \
+                    patch.object(prepare, "plot_results"), \
+                    patch.object(prepare.time, "sleep"):
+                run_id = prepare.score_deployment("deployment", "base", description="test")
+
+            metrics = json.loads((root / "runs" / run_id / "metrics.json").read_text(encoding="utf-8"))
+            self.assertEqual(metrics["eval_count"], 1)
+            self.assertEqual(metrics["eval_failure_count"], 0)
+            self.assertEqual(metrics["server_error_retries"][0]["error_type"], "timeout")
 
     def test_report_shows_successful_rows_out_of_total(self):
         with tempfile.TemporaryDirectory() as directory:
